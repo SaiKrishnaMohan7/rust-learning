@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
+    rc::Rc,
 };
 
 pub struct Entry {
@@ -14,8 +15,8 @@ impl Drop for Entry {
     }
 }
 pub struct Cache {
-    store: RefCell<HashMap<u32, Entry>>,
-    recents: RefCell<Vec<Entry>>,
+    store: RefCell<HashMap<u32, Rc<Entry>>>,
+    recents: RefCell<Vec<Rc<Entry>>>,
     computes: Cell<u32>,
 }
 
@@ -38,10 +39,9 @@ impl Cache {
             return entry.value;
         }
         let val = Self::expensive_compute(key);
-        self.store
-            .borrow_mut()
-            .insert(key, Entry { key, value: val });
-        self.recents.borrow_mut().push(Entry { key, value: val }); // not the same object as what is being stored in store! A copy... Rc is needed now since the same Entry object has to be coowned by HashMap and Vec
+        let entry = Rc::new(Entry { key, value: val });
+        self.store.borrow_mut().insert(key, Rc::clone(&entry));
+        self.recents.borrow_mut().push(Rc::clone(&entry)); // entry co-owned by both Vec and HashMap
         self.compute();
 
         return val;
@@ -51,8 +51,12 @@ impl Cache {
         self.computes.set(self.computes.get() + 1);
     }
 
-    pub fn remove(&self, key: u32) -> Option<Entry> {
-        return self.store.borrow_mut().remove(&key);
+    pub fn remove(&self, key: u32) -> Option<Rc<Entry>> {
+        let removed = self.store.borrow_mut().remove(&key);
+        if removed.is_some() {
+            self.recents.borrow_mut().retain(|e| e.key != key);
+        }
+        return removed;
     }
 
     // to be used by integration test later on
@@ -132,6 +136,18 @@ mod tests {
         let cache = Cache::new();
         cache.get(5);
         cache.remove(5);
-        assert_eq!(cache.recent_keys(), vec![5]); // stale key still there
+        assert_ne!(cache.recent_keys(), vec![5]);
+    }
+
+    #[test]
+    fn removed_entry_stays_alive_in_recents() {
+        let cache = Cache::new();
+        cache.get(5);
+
+        let removed = cache.remove(5).unwrap(); // store's Rc handed to us
+        assert_eq!(Rc::strong_count(&removed), 2); // us + recents = 2 owners
+
+        // recents still owns a live entry:
+        assert_eq!(cache.recent_keys(), vec![5]);
     }
 }
