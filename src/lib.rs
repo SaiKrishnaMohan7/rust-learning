@@ -1,7 +1,9 @@
 use std::{
-    cell::{Cell, RefCell},
     collections::HashMap,
-    rc::Rc,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 pub struct Entry {
@@ -15,69 +17,75 @@ impl Drop for Entry {
     }
 }
 pub struct Cache {
-    store: RefCell<HashMap<u32, Rc<Entry>>>,
-    recents: RefCell<Vec<Rc<Entry>>>,
-    computes: Cell<u32>,
+    store: Mutex<HashMap<u32, Arc<Entry>>>,
+    recents: Mutex<Vec<Arc<Entry>>>,
+    computes: AtomicU32,
 }
 
 impl Cache {
     pub fn new() -> Self {
         return Self {
-            store: RefCell::new(HashMap::new()),
-            recents: RefCell::new(Vec::new()),
-            computes: Cell::new(0),
+            store: Mutex::new(HashMap::new()),
+            recents: Mutex::new(Vec::new()),
+            computes: AtomicU32::new(0),
         };
     }
     fn expensive_compute(key: u32) -> u32 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
         return key * key;
     }
 }
 
 impl Cache {
     pub fn get(&self, key: u32) -> u32 {
-        if let Some(entry) = self.store.borrow().get(&key) {
+        let mut store = self.store.lock().unwrap();
+        if let Some(entry) = store.get(&key) {
             return entry.value;
         }
+
         let val = Self::expensive_compute(key);
-        let entry = Rc::new(Entry { key, value: val });
-        self.store.borrow_mut().insert(key, Rc::clone(&entry));
-        self.recents.borrow_mut().push(Rc::clone(&entry)); // entry co-owned by both Vec and HashMap
+        let entry = Arc::new(Entry { key, value: val });
+
+        store.insert(key, Arc::clone(&entry));
+        self.recents.lock().unwrap().push(Arc::clone(&entry));
         self.compute();
 
         return val;
     }
 
     fn compute(&self) {
-        self.computes.set(self.computes.get() + 1);
+        self.computes.fetch_add(1, Ordering::SeqCst);
     }
 
-    pub fn remove(&self, key: u32) -> Option<Rc<Entry>> {
-        let removed = self.store.borrow_mut().remove(&key);
-        if removed.is_some() {
-            self.recents.borrow_mut().retain(|e| e.key != key);
+    pub fn remove(&self, key: u32) -> Option<Arc<Entry>> {
+        {
+            let mut store = self.store.lock().unwrap();
+            let removed = store.remove(&key);
+
+            return removed;
         }
-        return removed;
     }
 
     // to be used by integration test later on
     pub fn get_compute(&self) -> u32 {
-        return self.computes.get();
+        return self.computes.load(Ordering::SeqCst);
     }
 
     pub fn recent_keys(&self) -> Vec<u32> {
-        return self.recents.borrow().iter().map(|e| e.key).collect();
+        return self.recents.lock().unwrap().iter().map(|e| e.key).collect();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     #[test]
     fn computes_on_miss() {
         let cache = Cache::new();
         assert_eq!(cache.get(3), 9);
-        assert_eq!(cache.computes.get(), 1);
+        assert_eq!(cache.get_compute(), 1);
     }
 
     #[test]
@@ -85,7 +93,7 @@ mod tests {
         let cache = Cache::new();
         assert_eq!(cache.get(3), 9);
         assert_eq!(cache.get(3), 9);
-        assert_eq!(cache.computes.get(), 1);
+        assert_eq!(cache.get_compute(), 1);
     }
 
     #[test]
@@ -107,11 +115,11 @@ mod tests {
     fn removed_key_recomputes_on_next_get() {
         let cache = Cache::new();
         cache.get(3);
-        assert_eq!(cache.computes.get(), 1);
+        assert_eq!(cache.get_compute(), 1);
 
         cache.remove(3);
         cache.get(3);
-        assert_eq!(cache.computes.get(), 2); // gone from store → recomputed
+        assert_eq!(cache.get_compute(), 2); // gone from store → recomputed
     }
 
     #[test]
@@ -136,7 +144,7 @@ mod tests {
         let cache = Cache::new();
         cache.get(5);
         cache.remove(5);
-        assert_ne!(cache.recent_keys(), vec![5]);
+        assert_eq!(cache.recent_keys(), vec![5]);
     }
 
     #[test]
@@ -144,10 +152,57 @@ mod tests {
         let cache = Cache::new();
         cache.get(5);
 
-        let removed = cache.remove(5).unwrap(); // store's Rc handed to us
-        assert_eq!(Rc::strong_count(&removed), 2); // us + recents = 2 owners
+        let removed = cache.remove(5).unwrap(); // store's Arc handed to us
+        assert_eq!(Arc::strong_count(&removed), 2); // us + recents = 2 owners
 
         // recents still owns a live entry:
         assert_eq!(cache.recent_keys(), vec![5]);
+    }
+
+    // ---- concurrency ----
+
+    #[test]
+    fn cache_is_shareable_across_threads() {
+        let cache = Arc::new(Cache::new());
+        let mut handles = vec![];
+
+        for _ in 0..8 {
+            let cache = Arc::clone(&cache);
+            handles.push(thread::spawn(move || {
+                for k in 0..5 {
+                    assert_eq!(cache.get(k), k * k);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // every key ends up cached and correct, regardless of interleaving
+        for k in 0..5 {
+            assert_eq!(cache.get(k), k * k);
+        }
+    }
+
+    #[test]
+    fn concurrent_gets_compute_once_per_key() {
+        let cache = Arc::new(Cache::new());
+        let mut handles = vec![];
+
+        for _ in 0..8 {
+            let cache = Arc::clone(&cache);
+            handles.push(thread::spawn(move || {
+                for k in 0..5 {
+                    cache.get(k);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // 5 distinct keys — ideally computed once each.
+        // PREDICT before running. Run it several times.
+        assert_eq!(cache.get_compute(), 5);
     }
 }
