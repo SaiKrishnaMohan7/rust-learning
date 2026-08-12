@@ -206,3 +206,10 @@ mod tests {
         assert_eq!(cache.get_compute(), 5);
     }
 }
+
+/*
+    Note:
+    - In real prod concurrency handling, a per key locking mechanism will be made use of.
+        - A map of locks keyed by the key from the main hashmap
+        - something like Mutex<Hashmap<u32, Arc<Mutex<()>>>>
+*/
