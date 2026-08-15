@@ -22,7 +22,20 @@ async fn check(url: &str) -> Report {
 
 fn main() {
     trpl::block_on(async {
-        let report = check("https://www.rust-lang.org").await;
-        println!("{:?}", report);
+        let urls = vec![
+            "https://www.rust-lang.org",
+            "https://doc.rust-lang.org",
+            "https://crates.io",
+            "https://example.com",
+            "https://httpbin.org/delay/2",
+        ];
+        let start = Instant::now();
+
+        // synchronously fetching
+        for url in urls {
+            let report = check(url).await;
+            println!("{:?}", report);
+        }
+        println!("TOTAL: {}ms", start.elapsed().as_millis());
     });
 }
