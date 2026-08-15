@@ -1,6 +1,6 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use trpl;
+use trpl::{self, Either};
 #[derive(Debug)]
 pub struct Report {
     pub url: String,
@@ -20,6 +20,13 @@ async fn check(url: &str) -> Report {
     };
 }
 
+async fn check_with_timeout(url: &str, delay: u64) -> Result<Report, String> {
+    match trpl::race(check(url), trpl::sleep(Duration::from_secs(delay))).await {
+        Either::Left(report) => Ok(report),
+        Either::Right(_) => Err(format!("{url} timed out after {delay} seconds")),
+    }
+}
+
 fn main() {
     trpl::block_on(async {
         let urls = vec![
@@ -31,10 +38,7 @@ fn main() {
         ];
         let start = Instant::now();
 
-        // Every future comes from the same async fn, hence, same type! so we use Vec<_> and let the compiler fill the type
-        // If futures were coming from different functions then we'd have to Vec<Pin<Box<dyn Future<Output = Report>>>>
-        let futures: Vec<_> = urls.iter().map(|url| check(url)).collect();
-        // Fetching concurrently
+        let futures: Vec<_> = urls.iter().map(|url| check_with_timeout(url, 1)).collect();
         let reports = trpl::join_all(futures).await;
 
         for report in reports {
