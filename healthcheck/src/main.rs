@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    pin::Pin,
+    time::{Duration, Instant},
+};
 
 use trpl::{self, Either};
 #[derive(Debug)]
@@ -38,10 +41,10 @@ async fn check_stub(name: &str) -> Report {
 
 fn main() {
     trpl::block_on(async {
-        // Mismatched types as they futures from different async fns are of different types
-        // each async fn is a state machine that maintains information about a task, variables, references etc. and therefore, HAVE to be
-        // different types; code at each suspension point differs!
-        let futures: Vec<_> = vec![check("https://example.com"), check_stub("fake-service")];
+        let futures: Vec<Pin<Box<dyn Future<Output = Report>>>> = vec![
+            Box::pin(check("https://example.com")),
+            Box::pin(check_stub("fake-service")),
+        ];
         let reports = trpl::join_all(futures).await;
 
         for report in reports {
