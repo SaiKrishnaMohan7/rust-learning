@@ -31,10 +31,14 @@ fn main() {
         ];
         let start = Instant::now();
 
-        // synchronously fetching
-        for url in urls {
-            let report = check(url).await;
-            println!("{:?}", report);
+        // Every future comes from the same async fn, hence, same type! so we use Vec<_> and let the compiler fill the type
+        // If futures were coming from different functions then we'd have to Vec<Pin<Box<dyn Future<Output = Report>>>>
+        let futures: Vec<_> = urls.iter().map(|url| check(url)).collect();
+        // Fetching concurrently
+        let reports = trpl::join_all(futures).await;
+
+        for report in reports {
+            println!("{report:?}");
         }
         println!("TOTAL: {}ms", start.elapsed().as_millis());
     });
