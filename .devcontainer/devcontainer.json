@@ -1,0 +1,39 @@
+{
+  "$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.base.schema.json",
+  "name": "rust-learning (Rust + Maelstrom)",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  // Maelstrom's `serve` command hosts the results browser on 8080.
+  "forwardPorts": [
+    8080
+  ],
+  "portsAttributes": {
+    "8080": {
+      "label": "Maelstrom results",
+      "onAutoForward": "notify"
+    }
+  },
+  // Named volumes keep cargo's registry and target/ off the bind mount,
+  // which is a big speedup on macOS/Windows.
+  "mounts": [
+    "source=rust-learning-cargo-registry,target=/usr/local/cargo/registry,type=volume",
+    "source=rust-learning-target,target=/workspaces/rust-learning/target,type=volume"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+        "tamasfe.even-better-toml",
+        "usernamehw.errorlens"
+      ],
+      "settings": {
+        "rust-analyzer.check.command": "clippy",
+        "editor.formatOnSave": true
+      }
+    }
+  },
+  "postCreateCommand": "sudo chown -R vscode /workspaces/rust-learning/target 2>/dev/null; maelstrom --version || true",
+  "remoteUser": "vscode"
+}
