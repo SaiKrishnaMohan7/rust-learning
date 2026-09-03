@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help crates check build release run test test-v test-serial test-one watch fmt fmt-check lint lint-fix doc clean audit deny tools ci
+.PHONY: help crates check build release run test test-v test-serial test-one watch fmt fmt-check lint lint-fix doc clean audit deny tools ci maelstrom-guard maelstrom-echo maelstrom-broadcast maelstrom-serve maelstrom-clean
 
 # Set P=<crate> to scope a command to one workspace member.
 #   make test P=cachelab   ->  cargo test -p cachelab
@@ -78,3 +78,32 @@ deny: ## Check licenses, bans, duplicate versions (needs cargo-deny)
 
 tools: ## Install the optional cargo subcommands used above
 	cargo install cargo-watch cargo-audit cargo-deny cargo-nextest cargo-expand
+
+# ---- maelstrom (devcontainer only) ----
+# Overridable: make maelstrom-broadcast NODES=5 TIME=20 RATE=10
+NODES ?= 1
+TIME  ?= 20
+RATE  ?= 10
+
+# Fail early and clearly when run on the host instead of inside the devcontainer.
+maelstrom-guard:
+	command -v maelstrom >/dev/null 2>&1 || { \
+	  echo "maelstrom not found on PATH."; \
+	  echo "These targets run inside the devcontainer (.devcontainer/Dockerfile)."; \
+	  exit 1; }
+
+maelstrom-echo: maelstrom-guard ## Maelstrom ch2 echo workload
+	cargo build -p maelstrom-echo
+	maelstrom test -w echo --bin ./target/debug/maelstrom-echo \
+	  --node-count $(NODES) --time-limit $(TIME) --rate $(RATE)
+
+maelstrom-broadcast: maelstrom-guard ## Maelstrom ch3 broadcast workload
+	cargo build -p maelstrom-broadcast
+	maelstrom test -w broadcast --bin ./target/debug/maelstrom-broadcast \
+	  --node-count $(NODES) --time-limit $(TIME) --rate $(RATE)
+
+maelstrom-serve: maelstrom-guard ## Browse results from store/ on http://localhost:8080
+	maelstrom serve
+
+maelstrom-clean: ## Remove maelstrom test results in store/
+	rm -rf store/
