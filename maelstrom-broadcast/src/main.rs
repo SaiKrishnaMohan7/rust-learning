@@ -58,6 +58,7 @@ struct Node {
     id: String,
     next_msg_id: u64,
     messages: HashSet<u64>,
+    neighbors: Vec<String>,
 }
 
 impl Node {
@@ -66,6 +67,7 @@ impl Node {
             id: String::new(),
             next_msg_id: 0,
             messages: HashSet::new(),
+            neighbors: Vec::new(),
         }
     }
 }
@@ -81,8 +83,8 @@ impl Node {
         writeln!(stdout, "{reply_json_string}").unwrap();
         stdout.flush().unwrap();
     }
-    fn insert_message(&mut self, message: u64) {
-        self.messages.insert(message);
+    fn insert_message(&mut self, message: u64) -> bool {
+        self.messages.insert(message)
     }
 }
 fn main() {
@@ -123,25 +125,46 @@ fn main() {
                 node.send(&mut stdout, &reply);
             }
             Body::Broadcast { msg_id, message } => {
-                let outgoing_id = node.next_id();
-                let reply_body = Body::BroadcastOk {
-                    msg_id: outgoing_id,
-                    in_reply_to: msg_id,
-                };
-                let reply = Message {
+                let sender = message_envelope.src;
+
+                let is_new = node.insert_message(message);
+
+                let ack_id = node.next_id();
+                let ack = Message {
                     src: node.id.clone(),
-                    dest: message_envelope.src,
-                    body: reply_body,
+                    dest: sender.clone(),
+                    body: Body::BroadcastOk {
+                        msg_id: ack_id,
+                        in_reply_to: msg_id,
+                    },
                 };
-                node.insert_message(message);
-                node.send(&mut stdout, &reply);
+                node.send(&mut stdout, &ack);
+
+                if is_new {
+                    let neighbors = node.neighbors.clone();
+                    for neighbor in neighbors {
+                        if neighbor == sender {
+                            continue;
+                        }
+                        let gossip_id = node.next_id();
+                        let gossip = Message {
+                            src: node.id.clone(),
+                            dest: neighbor,
+                            body: Body::Broadcast {
+                                msg_id: gossip_id,
+                                message,
+                            },
+                        };
+                        node.send(&mut stdout, &gossip);
+                    }
+                }
             }
             Body::Read { msg_id } => {
                 let outgoing_id = node.next_id();
                 let read_ok_body = Body::ReadOk {
                     msg_id: outgoing_id,
                     in_reply_to: msg_id,
-                    messages: node.messages.iter().map(|m| *m).collect(),
+                    messages: node.messages.iter().copied().collect(),
                 };
                 let reply = Message {
                     src: node.id.clone(),
@@ -150,7 +173,10 @@ fn main() {
                 };
                 node.send(&mut stdout, &reply);
             }
-            Body::Topology { msg_id, topology } => {
+            Body::Topology {
+                msg_id,
+                mut topology,
+            } => {
                 eprintln!("{:?}", topology);
                 let outgoing_id = node.next_id();
                 let reply_topo_ok = Body::TopologyOk {
@@ -162,6 +188,7 @@ fn main() {
                     dest: message_envelope.src,
                     body: reply_topo_ok,
                 };
+                node.neighbors = topology.remove(&node.id).unwrap_or_default();
                 node.send(&mut stdout, &reply);
             }
             Body::InitOk { .. }
