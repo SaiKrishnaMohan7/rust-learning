@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help crates check build release run test test-v test-serial test-one watch fmt fmt-check lint lint-fix doc clean audit deny tools ci maelstrom-guard maelstrom-echo maelstrom-broadcast maelstrom-serve maelstrom-clean
+.PHONY: help crates check build release run test test-v test-serial test-one watch fmt fmt-check lint lint-fix doc clean audit deny tools ci maelstrom-guard maelstrom-echo maelstrom-broadcast maelstrom-partition maelstrom-serve maelstrom-clean
 
 # Set P=<crate> to scope a command to one workspace member.
 #   make test P=cachelab   ->  cargo test -p cachelab
@@ -101,6 +101,11 @@ maelstrom-broadcast: maelstrom-guard ## Maelstrom ch3 broadcast workload
 	cargo build -p maelstrom-broadcast
 	maelstrom test -w broadcast --bin ./target/debug/maelstrom-broadcast \
 	  --node-count $(NODES) --time-limit $(TIME) --rate $(RATE)
+
+maelstrom-partition: maelstrom-guard ## Maelstrom ch3c broadcast under network partitions
+	cargo build -p maelstrom-broadcast
+	maelstrom test -w broadcast --bin ./target/debug/maelstrom-broadcast \
+	  --node-count $(NODES) --time-limit $(TIME) --rate $(RATE) --nemesis partition
 
 maelstrom-serve: maelstrom-guard ## Browse results from store/ on http://localhost:8080
 	maelstrom serve
